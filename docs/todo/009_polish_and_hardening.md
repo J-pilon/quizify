@@ -1,23 +1,30 @@
-# Phase 8 — Polish and hardening
+# Ticket 009 — Polish and hardening
 
-| | |
-| --- | --- |
-| Roadmap | [`ROADMAP.md` → Phase 8](../../ROADMAP.md) |
-| Depends on | Phases 0–7 |
-| Branch | `phase-8-polish-and-hardening` |
+Implements [`ROADMAP.md`](../../ROADMAP.md) Phase 8.
 
-## Goal
+## Overview and Context
 
-Make Quizify dependable enough to hand to someone else who brings their own keys. A new user should be able to install, configure, and complete the full workflow using only the README and the in-app onboarding.
+**Goal:** make Quizify dependable enough to hand to someone else who brings their own keys. A new user should be able to install, configure, and complete the full workflow using only the README and the in-app onboarding.
 
-## Context
+**Context:**
 
 - Users bring their own OpenAI key and Notion integration token. There's no backend and no support channel, so error messages and setup guidance have to stand on their own.
 - Distribution is a personal build for now: run from Xcode with a personal signing team. App Store distribution and notarization are out of scope.
 - Safari may stop the background service worker while it's idle. Quiz generation can take tens of seconds, so this needs checking.
 - API keys currently live in `browser.storage.local`, which isn't encrypted.
 
-## What to implement
+## Dependencies
+
+- `001_foundations.md`
+- `002_settings_and_connections.md`
+- `003_content_extraction_and_hashing.md`
+- `004_quiz_generation.md`
+- `005_quiz_page_ui.md`
+- `006_grading_and_results.md`
+- `007_save_to_notion.md`
+- `008_resume_from_notion.md`
+
+## Technical Requirements
 
 1. First-run onboarding.
 2. Consistent error handling across the popup, options page, and quiz page.
@@ -27,19 +34,30 @@ Make Quizify dependable enough to hand to someone else who brings their own keys
 6. Final icons and a README.
 7. An estimated cost per quiz, shown in settings.
 
-## How to implement
+## Implementation Steps
+
+- [ ] 1. Add `lib/errors.ts` and move all OpenAI and Notion failures onto it (see "Errors").
+- [ ] 2. Add the shared `<ErrorNotice>` component and use it everywhere (see "Errors").
+- [ ] 3. Build onboarding (see "Onboarding").
+- [ ] 4. Measure background worker lifetime and fix it if needed (see "Background worker lifetime").
+- [ ] 5. Run the Keychain investigation (see "Keychain investigation").
+- [ ] 6. Add `lib/providers/pricing.ts` and the cost estimate in settings (see "Cost estimate").
+- [ ] 7. Review test coverage and write the manual checklist (see "Tests and manual checklist").
+- [ ] 8. Add the final icons and the root `README.md` (see "Icons and README").
 
 ### Onboarding
 
 - When `runtime.onInstalled` fires with `reason === "install"`, open `options.html?onboarding=1`.
-- In onboarding mode, the options page becomes a three-step guide with progress indicators. Each step reuses the existing Phase 1 components.
+- In onboarding mode, the options page becomes a three-step guide with progress indicators. Each step reuses the existing Ticket 002 components.
   1. **OpenAI:** paste the key and pass **Test connection** before continuing.
   2. **Notion:** create the integration, share a page, paste the token, pick the page, and **Create databases**.
   3. **Defaults:** count, difficulty, types, and quiz location. Then **Finish**.
 - The final screen says "Open any article and click the Quizify icon," with a small picture showing where the toolbar icon is.
-- If the user leaves partway through, the popup shows **Finish setup** (`isConfigured()` from Phase 1), which reopens onboarding at the first incomplete step.
+- If the user leaves partway through, the popup shows **Finish setup** (`isConfigured()` from Ticket 002), which reopens onboarding at the first incomplete step.
 
-### Errors (`lib/errors.ts`)
+### Errors
+
+`lib/errors.ts`:
 
 ```ts
 export type ErrorCode =
@@ -60,18 +78,23 @@ export class QuizifyError extends Error {
 
 ### Background worker lifetime
 
-1. Measure: generate 15 hard short-answer questions from a page close to 12,000 words, five times, with Web Inspector open on the extension's background page. Record how long each takes and whether the worker is stopped mid-request.
-2. If the worker is stopped:
-   - First, send a heartbeat message every 10 seconds over the Phase 3 generation connection while the request is running.
-   - If that's not enough, switch generation to streaming (`stream: true`, then assemble the JSON before validating).
-   - As a last resort, move the OpenAI `fetch` into the quiz page itself. Extension pages can call hosts listed in `host_permissions`. Record this exception to the "all network calls go through the background" rule.
-3. Record the measurements and the outcome in `docs/decisions/phase-8_DECISIONS.md`.
+1. Measure: generate 15 hard short-answer questions from a page close to the `MAX_WORDS` cap, five times, with Web Inspector open on the extension's background page. Record how long each takes and whether the worker is stopped mid-request.
+2. If the worker is stopped, apply the fix chosen under "Technical Decisions Required".
+3. Record the measurements and the outcome.
 
-### Keychain investigation (time-boxed)
+### Keychain investigation
+
+Time-box this.
 
 - Try having the extension call `browser.runtime.sendNativeMessage` to reach the wrapper app's `SafariWebExtensionHandler`, which stores and reads keys with the Security framework (`SecItemAdd` and `SecItemCopyMatching`).
-- Decide based on how much complexity it adds, and whether keys can be read without delaying every API call (e.g. by caching them in memory in the background worker).
-- Implement it only if it's straightforward. Otherwise, record the decision and move it to "Later" in `ROADMAP.md`. Either way, the options page keeps its plain-language note about where keys are stored.
+- Judge it by how much complexity it adds, and whether keys can be read without delaying every API call (e.g. by caching them in memory in the background worker).
+- Either way, the options page keeps its plain-language note about where keys are stored.
+
+### Cost estimate
+
+- `lib/providers/pricing.ts`: a small table of per-million-token input and output prices for the models you expect to use, with a `PRICES_UPDATED` date.
+- Estimate a quiz's cost: input tokens ≈ (characters in prompt + article characters) ÷ 4, and output tokens ≈ count × 120. Add a rough estimate for a grading call.
+- In settings, under the model field, show "About $0.004 per 10-question quiz (prices as of <date>)". For a model missing from the table, show "Cost estimate unavailable for this model."
 
 ### Tests and manual checklist
 
@@ -95,20 +118,25 @@ export class QuizifyError extends Error {
 - App icon: added to the Xcode asset catalog at the sizes macOS requires.
 - `README.md` at the repository root:
   - What Quizify does, with one screenshot.
-  - Requirements: macOS, Safari 17.2 or later, Xcode, a free Apple ID.
-  - Build and run steps (from Phase 0).
+  - Requirements: macOS, a recent Safari, Xcode, a free Apple ID.
+  - Build and run steps (from Ticket 001).
   - Enabling the extension in Safari.
   - Setting up OpenAI and Notion (pointing to onboarding).
   - Privacy: page text is sent to OpenAI, quiz data is sent to your Notion, and keys stay local.
   - Troubleshooting.
 
-### Cost estimate
+## Technical Decisions Required
 
-- Add `lib/providers/pricing.ts`: a small table of per-million-token input and output prices for the models you expect to use, with a `PRICES_UPDATED` date.
-- Estimate a quiz's cost: input tokens ≈ (characters in prompt + 12,000 words × about 6 characters) ÷ 4, and output tokens ≈ count × 120. Add a rough estimate for a grading call.
-- In settings, under the model field, show "About $0.004 per 10-question quiz (prices as of <date>)". For a model missing from the table, show "Cost estimate unavailable for this model."
+1. **Fix for the background worker being stopped mid-request**, if measurement shows it happens. Options, simplest first:
+   - Send a heartbeat message every 10 seconds over the Ticket 004 generation connection while the request is running.
+   - Switch generation to streaming (`stream: true`), then assemble the JSON before validating.
+   - Move the OpenAI `fetch` into the quiz page itself. Extension pages can call hosts listed in `host_permissions`. This would be an exception to the "all network calls go through the background" rule in `AGENT.md`.
+2. **Keychain storage for API keys:** implement it now, or move it to the roadmap's "Later". If it's moved, add it to "Later" in `ROADMAP.md`.
+3. **How the pricing table is maintained.** Suggested: a hard-coded table with a `PRICES_UPDATED` date that's updated by hand. The alternative is no estimate at all.
 
-## Acceptance criteria
+Record all decisions, including the worker lifetime measurements, in `docs/implemented/009_DECISIONS.md`.
+
+## Acceptance Criteria
 
 - [ ] On a fresh install, the onboarding guide opens automatically, and a user can complete OpenAI setup, Notion setup, and defaults without leaving it.
 - [ ] Onboarding won't move past a step until that step's connection test or database creation succeeds.
@@ -123,7 +151,7 @@ export class QuizifyError extends Error {
 - [ ] Someone who hasn't seen the project can follow the README and onboarding to install Quizify, configure it, and save a completed quiz to Notion, without help.
 - [ ] Settings show an estimated cost per quiz for known models and a clear "unavailable" message for others.
 
-## Test plan
+## Test Plan
 
 - `errors.test.ts`
   - Each OpenAI and Notion failure maps to the expected `ErrorCode`, message, and retryable flag.
@@ -133,8 +161,8 @@ export class QuizifyError extends Error {
 - `onboarding.test.tsx`: each step blocks moving on until it succeeds, and reopening starts at the first incomplete step.
 - Everything else is checked with the manual checklist.
 
-## Out of scope
+## Out of Scope
 
-- Other AI providers, iOS, PDFs, and Chrome or Firefox (all in "Later").
+- Other AI providers, iOS, PDFs, and Chrome or Firefox (all in the roadmap's "Later").
 - App Store distribution and notarization.
-- Page versioning and quote highlighting (in "Later").
+- Page versioning and quote highlighting (in the roadmap's "Later").

@@ -1,16 +1,12 @@
-# Phase 1 — Settings and connections
+# Ticket 002 — Settings and connections
 
-| | |
-| --- | --- |
-| Roadmap | [`ROADMAP.md` → Phase 1](../../ROADMAP.md) |
-| Depends on | Phase 0 (build, message bus, options page shell) |
-| Branch | `phase-1-settings-and-connections` |
+Implements [`ROADMAP.md`](../../ROADMAP.md) Phase 1.
 
-## Goal
+## Overview and Context
 
-A user can bring their own OpenAI key and Notion integration token, test both, set quiz defaults, and have Quizify create its two Notion databases, all from the options page without touching code.
+**Goal:** a user can bring their own OpenAI key and Notion integration token, test both, set quiz defaults, and have Quizify create its two Notion databases, all from the options page without touching code.
 
-## Context
+**Context:**
 
 - There's no backend. Keys are stored locally in `browser.storage.local` and sent only to their own API.
 - All network calls go through the background service worker. The Notion API doesn't send CORS headers, so the options page must ask the background to make calls instead of calling `fetch` itself.
@@ -18,7 +14,11 @@ A user can bring their own OpenAI key and Notion integration token, test both, s
 - Notion layout: two related databases, **Sources** (one row per webpage) and **Quizzes** (one row per quiz attempt), joined by a two-way relation.
 - Notion API versions from `2025-09-03` onward split each database into one or more **data sources**. Creating rows, querying, and relations target the data source ID, not the database ID.
 
-## What to implement
+## Dependencies
+
+- `001_foundations.md` (build, message bus, options page shell)
+
+## Technical Requirements
 
 1. A settings module with a typed schema, defaults, and load/save helpers.
 2. An options page with sections for AI provider, quiz defaults, quiz location, and Notion.
@@ -26,9 +26,16 @@ A user can bring their own OpenAI key and Notion integration token, test both, s
 4. A Notion setup flow: instructions, token entry, parent page picker, and **Create databases**.
 5. A minimal Notion client in the background worker with a pinned `Notion-Version`.
 
-## How to implement
+## Implementation Steps
 
-### Settings (`lib/settings.ts`)
+- [ ] 1. Add `lib/settings.ts` (see "Settings").
+- [ ] 2. Add `lib/notion/client.ts` with `notionFetch` and the pinned version (see "Notion client").
+- [ ] 3. Add the background messages `TEST_OPENAI`, `TEST_NOTION`, `SEARCH_NOTION_PAGES`, and `CREATE_NOTION_DATABASES` (see "Background messages").
+- [ ] 4. Add `lib/notion/schema.ts` to build the two database requests (see "Creating the databases").
+- [ ] 5. Build the options page sections (see "Options page").
+- [ ] 6. Build the Notion setup flow UI (see "Setup flow UI").
+
+### Settings
 
 ```ts
 export interface Settings {
@@ -51,19 +58,15 @@ export interface Settings {
 ```
 
 - Store everything under one `settings` key. `loadSettings()` merges stored values over `DEFAULT_SETTINGS`, so adding fields later doesn't break older installs.
-- Define `DEFAULT_MODEL` once, in `lib/providers/openai.ts`. Choosing the actual default model is an open question in the roadmap, resolved in Phase 3. Use a reasonable placeholder for now.
-- `isConfigured(settings)` returns true only when the OpenAI key and every Notion ID are present. Later phases use it to decide whether the popup shows **Generate quiz** or **Finish setup**.
+- Define `DEFAULT_MODEL` once, in `lib/providers/openai.ts`. Use a reasonable placeholder for now; Ticket 004 chooses the real default.
+- `isConfigured(settings)` returns true only when the OpenAI key and every Notion ID are present. Later tickets use it to decide whether the popup shows **Generate quiz** or **Finish setup**.
 
-### Options page
+### Notion client
 
-- **AI provider:** a provider dropdown (only OpenAI for now), a password input for the API key, a model text input defaulting to `DEFAULT_MODEL`, and **Test connection**.
-- **Quiz defaults:** question count (5/10/15), difficulty (easy/medium/hard), and question-type checkboxes. At least one type must stay checked.
-- **Quiz location:** a radio group for **New tab** (default) or **Separate window**.
-- **Notion:** setup steps (below), connection status, and the created database names with links.
-- Show a note near the key fields: "Your keys are stored only in this browser and are sent only to OpenAI and Notion."
-- Save each field on change, and show a small "Saved" confirmation.
+- `notionFetch(path, init)` sets `Authorization: Bearer <token>`, `Notion-Version: <pinned>`, and `Content-Type: application/json`, then parses errors into `{ status, code, message }`.
+- Pin the API version in one constant. Check the request shapes below against Notion's current docs before coding.
 
-### Background messages to add
+### Background messages
 
 | Message | What it does |
 | --- | --- |
@@ -72,12 +75,7 @@ export interface Settings {
 | `SEARCH_NOTION_PAGES { token, query }` | `POST /v1/search` filtered to pages. Returns `{ id, title, icon }[]`. |
 | `CREATE_NOTION_DATABASES { token, parentPageId }` | Creates both databases (below) and returns their IDs. |
 
-### Notion client (`lib/notion/client.ts`)
-
-- Add a `notionFetch(path, init)` helper that sets `Authorization: Bearer <token>`, `Notion-Version: <pinned>`, and `Content-Type: application/json`, then parses errors into `{ status, code, message }`.
-- Pin the API version in one constant. Recommended: `2025-09-03`, so new code doesn't depend on behavior Notion is deprecating. Check the request shapes below against Notion's current docs before coding, and record the version you choose in `docs/decisions/phase-1_DECISIONS.md`.
-
-### Creating the databases (`lib/notion/schema.ts`)
+### Creating the databases
 
 Create **Sources** first, because Quizzes' relation needs Sources' data source ID.
 
@@ -110,8 +108,17 @@ Create **Sources** first, because Quizzes' relation needs Sources' data source I
 Notes:
 
 - **Status** is a `select`, because the Notion API can't create `status` properties.
-- Notion's `percent` number format expects a fraction (0.8 displays as 80%). Phase 6 writes `score / 100`.
+- Notion's `percent` number format expects a fraction (0.8 displays as 80%). Ticket 007 writes `score / 100`.
 - If setup fails partway through (e.g. Sources was created but Quizzes failed), show the error and let the user retry. On retry, reuse the Sources database already recorded in settings instead of creating a second one.
+
+### Options page
+
+- **AI provider:** a provider dropdown (only OpenAI for now), a password input for the API key, a model text input defaulting to `DEFAULT_MODEL`, and **Test connection**.
+- **Quiz defaults:** question count (5/10/15), difficulty (easy/medium/hard), and question-type checkboxes. At least one type must stay checked.
+- **Quiz location:** a radio group for **New tab** (default) or **Separate window**.
+- **Notion:** setup steps (below), connection status, and the created database names with links.
+- Show a note near the key fields: "Your keys are stored only in this browser and are sent only to OpenAI and Notion."
+- Save each field on change, and show a small "Saved" confirmation.
 
 ### Setup flow UI
 
@@ -124,7 +131,14 @@ Notes:
 4. **Create databases**, followed by a success state that links to both databases.
 5. Once databases exist, replace the create button with **Reset Notion setup**, which clears the stored IDs. It never deletes anything in Notion.
 
-## Acceptance criteria
+## Technical Decisions Required
+
+1. **Notion API version to pin.** Recommended: `2025-09-03`, so new code doesn't depend on behavior Notion is deprecating. The alternative is `2022-06-28`, which uses database IDs everywhere and doesn't have data sources. This resolves the roadmap's "Notion API version" open question.
+2. **Placeholder default model** until Ticket 004 chooses the real one.
+
+Record all decisions in `docs/implemented/002_DECISIONS.md`.
+
+## Acceptance Criteria
 
 - [ ] On a fresh install, the options page loads with default values: 10 questions, medium difficulty, multiple choice selected, and quiz location set to new tab.
 - [ ] Every setting persists after closing and reopening the options page and after restarting Safari.
@@ -138,9 +152,9 @@ Notes:
 - [ ] No network request is made from the options page itself. Every API call goes through the background worker.
 - [ ] API keys are never written to the console or included in error messages.
 - [ ] `isConfigured()` returns false until the OpenAI key and Notion setup are both complete.
-- [ ] The chosen `Notion-Version` is recorded in `docs/decisions/phase-1_DECISIONS.md`.
+- [ ] The chosen `Notion-Version` is recorded in `docs/implemented/002_DECISIONS.md`.
 
-## Test plan
+## Test Plan
 
 - `lib/settings.test.ts`
   - `loadSettings` returns defaults when nothing is stored.
@@ -154,10 +168,10 @@ Notes:
   - Turns a Notion error response into `{ status, code, message }`.
 - Add a `notion-factories.ts` with `makeNotionErrorResponse()` and `makeCreateDatabaseResponse()`, following the testing conventions.
 
-## Out of scope
+## Out of Scope
 
-- Generating quizzes or using the OpenAI key beyond **Test connection** (Phase 3).
-- Writing rows to Notion (Phase 6).
-- Opening the quiz in a window (Phase 4 honors the setting saved here).
-- First-run onboarding (Phase 8).
-- Storing keys in the macOS Keychain (Phase 8).
+- Generating quizzes or using the OpenAI key beyond **Test connection** (Ticket 004).
+- Writing rows to Notion (Ticket 007).
+- Opening the quiz in a window (Ticket 005 honors the setting saved here).
+- First-run onboarding (Ticket 009).
+- Storing keys in the macOS Keychain (Ticket 009).

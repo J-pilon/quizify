@@ -1,16 +1,12 @@
-# Phase 5 — Grading and results
+# Ticket 006 — Grading and results
 
-| | |
-| --- | --- |
-| Roadmap | [`ROADMAP.md` → Phase 5](../../ROADMAP.md) |
-| Depends on | Phase 3 (`AIProvider`, OpenAI adapter), Phase 4 (reducer `finished` state, quiz page) |
-| Branch | `phase-5-grading-and-results` |
+Implements [`ROADMAP.md`](../../ROADMAP.md) Phase 5.
 
-## Goal
+## Overview and Context
 
-When a quiz is finished, Quizify grades it and shows an end-of-quiz review: the score, then every question with your answer, the correct answer, an explanation, and the supporting quote from the page.
+**Goal:** when a quiz is finished, Quizify grades it and shows an end-of-quiz review: the score, then every question with your answer, the correct answer, an explanation, and the supporting quote from the page.
 
-## Context
+**Context:**
 
 - Feedback appears only at the end, never after each question.
 - Multiple-choice and true/false questions can be graded locally. Short answers need AI grading.
@@ -18,7 +14,12 @@ When a quiz is finished, Quizify grades it and shows an end-of-quiz review: the 
 - Skipped and unanswered questions count as incorrect.
 - Highlighting quotes on the article page is a "Later" feature. In v1, quotes are shown as text on the results screen.
 
-## What to implement
+## Dependencies
+
+- `004_quiz_generation.md` (`AIProvider`, OpenAI adapter)
+- `005_quiz_page_ui.md` (reducer `finished` state, quiz page)
+
+## Technical Requirements
 
 1. Local grading for multiple-choice and true/false questions.
 2. `gradeShortAnswers` in the OpenAI adapter, as one batched call.
@@ -27,9 +28,15 @@ When a quiz is finished, Quizify grades it and shows an end-of-quiz review: the 
 5. The results screen.
 6. Recording `completedAt`, `score`, and `status: "completed"`.
 
-## How to implement
+## Implementation Steps
 
-### Local grading (`lib/quiz/grading.ts`)
+- [ ] 1. Add `gradeLocally` and the scoring function to `lib/quiz/grading.ts` (see "Local grading" and "Scoring").
+- [ ] 2. Implement `gradeShortAnswers` in the OpenAI adapter (see "AI grading").
+- [ ] 3. Add the `GRADE_SHORT_ANSWERS` background message and the `APPLY_GRADES` reducer action (see "Flow after Finish").
+- [ ] 4. Add the grading state and error handling to the quiz page (see "Flow after Finish").
+- [ ] 5. Build `quiz-page/Results.tsx`, replacing the Ticket 005 placeholder (see "Results screen").
+
+### Local grading
 
 ```ts
 export function gradeLocally(question: Question, answer?: Answer): Answer["grade"] | "needs_ai";
@@ -43,7 +50,7 @@ export function gradeLocally(question: Question, answer?: Answer): Answer["grade
 
 The comparison is exact because the value always comes from the question's own choices.
 
-### AI grading (`lib/providers/openai.ts`)
+### AI grading
 
 ```ts
 interface ShortAnswerGradeInput {
@@ -61,7 +68,7 @@ interface ShortAnswerGrade {
 }
 ```
 
-- Send **one** Chat Completions request for all short answers in the quiz, using Structured Outputs with a schema for `{ grades: ShortAnswerGrade[] }`.
+- Send **one** request for all short answers in the quiz, using Structured Outputs with a schema for `{ grades: ShortAnswerGrade[] }`. Use the same endpoint chosen in Ticket 004.
 - Prompt rules:
   - Judge the user's answer only against the reference answer and the source quote, never outside knowledge.
   - Accept paraphrases and synonyms.
@@ -73,22 +80,24 @@ interface ShortAnswerGrade {
 ### Scoring
 
 ```ts
-score = Math.round(100 * (correctCount + 0.5 * partialCount) / questions.length);
+score = Math.round(100 * (correctCount + PARTIAL_CREDIT * partialCount) / questions.length);
 ```
 
-The score is an integer from 0 to 100, stored in `Quiz.score`. Notion conversion happens in Phase 6.
+The score is an integer from 0 to 100, stored in `Quiz.score`. Notion conversion happens in Ticket 007.
 
 ### Flow after Finish
 
-1. The reducer reaches `finished` (Phase 4).
+1. The reducer reaches `finished` (Ticket 005).
 2. The quiz page enters a `grading` state ("Checking your answers…"). It grades locally and collects every `needs_ai` question.
 3. If any questions need AI, the quiz page sends `GRADE_SHORT_ANSWERS { quizId, inputs }` to the background, which calls `provider.gradeShortAnswers`.
 4. Add a reducer action, `APPLY_GRADES { grades, completedAt }`. It writes each answer's `grade` (and `feedback` for short answers), sets `score`, `status: "completed"`, `completedAt`, and `updatedAt`, then moves to the `results` phase.
 5. **If AI grading fails:** show the error with **Retry grading**. The quiz stays `in_progress` with its answers locked. It's never marked completed with missing grades. **Save quiz** still works and saves it as *In progress*.
 6. If there are no short answers, skip the network call and go straight to the results.
-7. The quiz autosaves (Phase 4) after every step, so a reload during or after grading returns to the right state. A reload during grading restarts grading.
+7. The quiz autosaves (Ticket 005) after every step, so a reload during or after grading returns to the right state. A reload during grading restarts grading.
 
-### Results screen (`quiz-page/Results.tsx`)
+### Results screen
+
+`quiz-page/Results.tsx`:
 
 - **Score header:** "8 of 10 correct · 80%". Partial credit appears as "7 correct, 2 partial".
 - **One card per question, in order:**
@@ -97,11 +106,18 @@ The score is an integer from 0 to 100, stored in `Quiz.score`. Notion conversion
   - **Correct answer:** the correct choice, or the reference answer for short answers.
   - **Feedback:** short answers only, from AI grading.
   - **Explanation.**
-  - **From the page:** the `sourceQuote` in a blockquote. The card header links to the article.
+  - **From the page:** the `sourceQuote` in a blockquote.
 - An **Incorrect only** filter toggle.
-- **Save quiz** stays visible, as in Phase 4.
+- **Save quiz** stays visible, as in Ticket 005.
 
-## Acceptance criteria
+## Technical Decisions Required
+
+1. **`PARTIAL_CREDIT` value.** Suggested: 0.5, as in the roadmap.
+2. **What happens when AI grading fails.** Suggested: keep the quiz in progress with answers locked and offer **Retry grading**, as described above. The alternative is to complete the quiz with short answers marked "ungraded".
+
+Record all decisions in `docs/implemented/006_DECISIONS.md`.
+
+## Acceptance Criteria
 
 - [ ] After **Finish**, multiple-choice and true/false questions are graded without any network request.
 - [ ] A selected answer that matches the correct answer is graded Correct; any other selected answer is graded Incorrect.
@@ -110,14 +126,14 @@ The score is an integer from 0 to 100, stored in `Quiz.score`. Notion conversion
 - [ ] A paraphrased short answer that's correct according to the source quote is graded Correct.
 - [ ] A short answer that's correct by general knowledge but contradicts the page is graded Incorrect or Partial, and its feedback points to what the page says.
 - [ ] Each short answer shows one sentence of feedback.
-- [ ] The score equals `round(100 × (correct + 0.5 × partial) / total)`. For example, 7 correct and 2 partial out of 10 scores 80.
+- [ ] The score equals `round(100 × (correct + PARTIAL_CREDIT × partial) / total)`. With a partial credit of 0.5, 7 correct and 2 partial out of 10 scores 80.
 - [ ] The results screen lists every question with the user's answer, the correct answer, the explanation, and the supporting quote from the page.
 - [ ] The **Incorrect only** toggle hides questions graded Correct.
 - [ ] After grading, the quiz has `status: "completed"`, a `completedAt` timestamp, and a `score`, and these survive a page reload.
 - [ ] If AI grading fails, the quiz stays in progress, an error appears with **Retry grading**, and retrying can finish grading successfully.
 - [ ] A quiz with no short-answer questions reaches the results screen without calling the API.
 
-## Test plan
+## Test Plan
 
 - `grading.test.ts`
   - Correct and incorrect choices.
@@ -134,8 +150,8 @@ The score is an integer from 0 to 100, stored in `Quiz.score`. Notion conversion
 - Component tests: the results screen shows the right badge and "Skipped" for each grade, and the filter toggle works.
 - Add `makeShortAnswerQuestion()` and `makeGradedQuiz({ correct, partial, incorrect })` to `quiz-factories.ts`.
 
-## Out of scope
+## Out of Scope
 
-- Saving the results to Notion (Phase 6).
-- Highlighting quotes on the article page (in "Later").
-- "Retake missed questions" and spaced repetition (in "Later").
+- Saving the results to Notion (Ticket 007).
+- Highlighting quotes on the article page (in the roadmap's "Later").
+- "Retake missed questions" and spaced repetition (in the roadmap's "Later").

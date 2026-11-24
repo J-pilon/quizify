@@ -1,31 +1,33 @@
-# Phase 6 — Save to Notion
+# Ticket 007 — Save to Notion
 
-| | |
-| --- | --- |
-| Roadmap | [`ROADMAP.md` → Phase 6](../../ROADMAP.md) |
-| Depends on | Phase 1 (Notion client, database IDs), Phase 4 (**Save quiz** button, autosave), Phase 5 (graded quiz) |
-| Branch | `phase-6-save-to-notion` |
+Implements [`ROADMAP.md`](../../ROADMAP.md) Phase 6.
 
-## Goal
+## Overview and Context
 
-**Save quiz** writes the page's Source and the quiz attempt to Notion, whether the quiz is finished or not. Saving the same quiz again updates the existing rows instead of creating duplicates.
+**Goal:** **Save quiz** writes the page's Source and the quiz attempt to Notion, whether the quiz is finished or not. Saving the same quiz again updates the existing rows instead of creating duplicates.
 
-## Context
+**Context:**
 
-- Notion has two databases, created in Phase 1:
+- Notion has two databases, created in Ticket 002:
   - **Sources:** one row per webpage, matched by normalized URL.
   - **Quizzes:** one row per attempt, linked to its Source. Retaking a page's quiz adds a new row.
-- Each quiz's Notion page body contains readable question sections, plus a "Quizify data — do not edit" code block holding the full `Quiz` JSON. Phase 7 reads that block to resume a quiz.
+- Each quiz's Notion page body contains readable question sections, plus a "Quizify data — do not edit" code block holding the full `Quiz` JSON. Ticket 008 reads that block to resume a quiz.
 - Answers on the Notion page are hidden inside collapsible toggles, so opening an unfinished quiz doesn't spoil them.
 - The content hash is saved on both the Source and the Quiz.
-- Use the `Notion-Version` pinned in Phase 1. Write rows to data source IDs (`sourcesDataSourceId` and `quizzesDataSourceId` in settings) if you're on version `2025-09-03` or later.
+- Use the `Notion-Version` pinned in Ticket 002 (see `docs/implemented/002_DECISIONS.md`). Write rows to data source IDs (`sourcesDataSourceId` and `quizzesDataSourceId` in settings) if that version is `2025-09-03` or later.
 - Notion limits:
   - About 3 requests per second on average.
   - At most 100 blocks per create or append request.
   - At most 2,000 characters per rich text item.
   - At most 100 rich text items per block.
 
-## What to implement
+## Dependencies
+
+- `002_settings_and_connections.md` (Notion client, database IDs)
+- `005_quiz_page_ui.md` (**Save quiz** button, autosave)
+- `006_grading_and_results.md` (graded quiz)
+
+## Technical Requirements
 
 1. A request queue in the Notion client that serializes requests, retries on rate limits, and backs off.
 2. Find-or-create for the Source, then updating it.
@@ -34,16 +36,24 @@
 5. Status rules: *In progress* or *Completed*.
 6. Wiring the **Save quiz** button, with a success notice and readable errors.
 
-## How to implement
+## Implementation Steps
 
-### Request queue (`lib/notion/client.ts`)
+- [ ] 1. Add the request queue to `lib/notion/client.ts` (see "Request queue").
+- [ ] 2. Add `toRichText` and `lib/notion/quiz-blocks.ts` (see "Page body").
+- [ ] 3. Add `lib/notion/sources.ts` (see "Source").
+- [ ] 4. Add `lib/notion/quizzes.ts` (see "Quiz row").
+- [ ] 5. Add the `SAVE_QUIZ` background message (see "Saving").
+- [ ] 6. Map Notion errors to messages (see "Errors").
+- [ ] 7. Connect the quiz page's **Save quiz** button and add the save status (see "UI").
+
+### Request queue
 
 - Send requests one at a time, at least 350 ms apart.
 - On HTTP 429, wait for the number of seconds in the `Retry-After` header (default 1 s), then retry. Give up after 3 attempts.
 - On a 5xx error or network failure, retry twice with exponential backoff (500 ms, then 1500 ms).
 - Never retry 400, 401, 403, or 404.
 
-### Source (`lib/notion/sources.ts`)
+### Source
 
 `upsertSource(quiz) → sourcePageId`:
 
@@ -57,9 +67,9 @@
    - **Tags:** the quiz's tags.
 
    The page body is a "Summary" heading followed by the full summary as paragraphs. Split any paragraph longer than 2,000 characters across several rich text items.
-4. **Updating an existing Source:** overwrite Summary and Content hash, and set Tags to the union of the existing and new tag names. Replace the body's summary: list the page's child blocks, delete them, and append the new summary blocks. This follows the roadmap's current plan; see "Decisions" below.
+4. **Updating an existing Source:** apply the rule chosen under "Technical Decisions Required". Tags are always set to the union of the existing and new tag names.
 
-### Quiz row (`lib/notion/quizzes.ts`)
+### Quiz row
 
 `upsertQuiz(quiz, sourcePageId) → { quizPageId, url }`:
 
@@ -77,7 +87,7 @@
 - **Update:** if `quizPageId` is set, `PATCH /v1/pages/{id}` with the properties, then replace the whole body: list all child blocks (following pagination), delete each one, and append the new blocks in batches.
 - If the stored `quizPageId` no longer exists (404 because the page was deleted), create a new page instead and replace the stored ID.
 
-### Page body (`lib/notion/quiz-blocks.ts`)
+### Page body
 
 Write this as a pure function, `buildQuizBlocks(quiz) → BlockObjectRequest[]`, so it can be tested.
 
@@ -93,18 +103,19 @@ Write this as a pure function, `buildQuizBlocks(quiz) → BlockObjectRequest[]`,
      - `quote` with the `sourceQuote`
 3. `divider`.
 4. `heading_3`: "Quizify data — do not edit".
-5. `code` block with `language: "json"`, containing `JSON.stringify(quiz)` split into rich text items of at most 2,000 characters each. Include the `notion` IDs in this JSON. If the JSON would need more than 100 rich text items (about 200,000 characters), split it across several consecutive code blocks. Phase 7 joins them back together.
+5. `code` block with `language: "json"`, containing `JSON.stringify(quiz)` split into rich text items of at most 2,000 characters each. Include the `notion` IDs in this JSON. If the JSON would need more than 100 rich text items (about 200,000 characters), split it across several consecutive code blocks. Ticket 008 joins them back together.
 
 Every rich text value longer than 2,000 characters must be split into multiple items. Put that in one helper, `toRichText(text)`.
 
-### Saving (`background/save-quiz.ts`)
+### Saving
 
-`SAVE_QUIZ { quizId }`:
+`background/save-quiz.ts` handles `SAVE_QUIZ { quizId }`:
 
 1. Load `quiz:<quizId>` from storage.
 2. `upsertSource`, then `upsertQuiz`.
-3. Write `quiz.notion = { sourcePageId, quizPageId }` and a new `updatedAt` back to local storage. Then update the data block one more time so it includes those IDs. Alternatively, include the IDs before writing the body when you already know them; either way works, as long as the saved data block contains the IDs.
-4. Return `{ ok: true, url }`, or `{ ok: false, error }`.
+3. Make sure the saved data block contains `quiz.notion = { sourcePageId, quizPageId }`. Either include the IDs before writing the body when they're already known, or rewrite the data block once the new page's ID is known.
+4. Write the `notion` IDs and a new `updatedAt` back to local storage.
+5. Return `{ ok: true, url }`, or `{ ok: false, error }`.
 
 Ignore a second **Save quiz** click while a save is already running, and show the button as "Saving…".
 
@@ -121,16 +132,21 @@ Ignore a second **Save quiz** click while a save is already running, and show th
 
 - On success, show a notice "Saved to Notion" with an **Open in Notion** link to the Quiz page, using the `url` field from Notion's response.
 - Show the quiz's save status next to the button: "Not saved", "Saved 2 minutes ago", or "Unsaved changes" (when the local `updatedAt` is newer than the last save).
-- After a successful save, Phase 4's warning on closing the page no longer appears until the quiz changes again.
+- After a successful save, Ticket 005's warning on closing the page no longer appears until the quiz changes again.
 
-## Decisions
+## Technical Decisions Required
 
-- The roadmap lists "summary on retake" as an open question. This ticket follows the roadmap's current plan: overwrite the summary and hash, and merge tags. If that changes before implementation, update this ticket and Phase 7's changed-page note together.
+1. **How to update an existing Source's summary and hash when a page is saved again.** This is the roadmap's open question "Summary on retake before versioning exists". Options:
+   - **Always overwrite** the Summary, Content hash, and the summary in the page body. This is the roadmap's current plan.
+   - **Overwrite only when the hash is unchanged.** When the hash differs, keep the old summary and hash, and rely on Ticket 008's "page changed" notice until page versioning exists.
+2. **What the Source's URL property stores.** Suggested: the normalized URL, so it serves as both the backlink and the matching key. The alternative is to store the original URL and add a separate property for the normalized one.
 
-## Acceptance criteria
+Record all decisions in `docs/implemented/007_DECISIONS.md`.
+
+## Acceptance Criteria
 
 - [ ] Clicking **Save quiz** on a quiz for a page that has never been saved creates one Sources row and one Quizzes row, linked to each other.
-- [ ] The Sources row has the page title, the normalized URL (which opens the article), the content hash, a summary of at most 2,000 characters, and the tags. Its page body contains the full summary.
+- [ ] The Sources row has the page title, the URL (which opens the article), the content hash, a summary of at most 2,000 characters, and the tags. Its page body contains the full summary.
 - [ ] Saving an unfinished quiz creates a Quizzes row with Status *In progress*, a Started date and time, no Completed date, and no Score.
 - [ ] Saving from the results screen creates or updates the row with Status *Completed*, Started and Completed dates and times, and a Score that displays as the same percentage shown on the results screen.
 - [ ] The Quizzes row has the content hash of the page the quiz was generated from.
@@ -138,7 +154,7 @@ Ignore a second **Save quiz** click while a save is already running, and show th
 - [ ] The quiz page body ends with a "Quizify data — do not edit" code block whose combined text parses as JSON equal to the local quiz, including the `notion` IDs.
 - [ ] Saving the same quiz twice, or saving it partway through and again after finishing, updates the same Quizzes row. It never creates a second one.
 - [ ] Generating and saving a new quiz for a page that already has a Source reuses that Source and adds a second Quizzes row linked to it.
-- [ ] Saving a second quiz for the same page merges tags on the Source instead of replacing them.
+- [ ] Saving a second quiz for the same page merges tags on the Source instead of replacing them, and updates the summary and hash according to the recorded decision.
 - [ ] A quiz with 15 questions (more than 100 blocks) saves completely, with all questions and the data block present.
 - [ ] Text longer than 2,000 characters (e.g. a long summary or a long short answer) saves without a Notion validation error.
 - [ ] Bursts of requests never fail with HTTP 429. Rate-limited requests are retried after the `Retry-After` delay.
@@ -146,7 +162,7 @@ Ignore a second **Save quiz** click while a save is already running, and show th
 - [ ] After saving, an **Open in Notion** link opens the Quizzes row.
 - [ ] Double-clicking **Save quiz** results in only one save.
 
-## Test plan
+## Test Plan
 
 - `quiz-blocks.test.ts`
   - Body structure for an in-progress quiz and for a completed quiz.
@@ -160,6 +176,7 @@ Ignore a second **Save quiz** click while a save is already running, and show th
   - Matches an existing Source by normalized URL.
   - Creates a Source when none exists.
   - Merges tags.
+  - Applies the chosen summary-update rule.
 - `quizzes.test.ts` (mocked client)
   - Creates on the first save and updates on later saves.
   - Batches appends in groups of 100.
@@ -172,9 +189,9 @@ Ignore a second **Save quiz** click while a save is already running, and show th
   - 5xx errors back off, and 401 errors aren't retried.
 - Add `makeSavedQuiz()` (a quiz with `notion` IDs) to the factories, and `makeNotionPage()` and `makeBlockList()` to `notion-factories.ts`.
 
-## Out of scope
+## Out of Scope
 
-- Loading quizzes back from Notion to resume them (Phase 7).
-- Flagging changed pages (Phase 7).
-- Page versioning, where a changed hash creates a new Source version (in "Later").
-- Optional extra fields such as time spent and model used (in "Later").
+- Loading quizzes back from Notion to resume them (Ticket 008).
+- Flagging changed pages (Ticket 008).
+- Page versioning, where a changed hash creates a new Source version (in the roadmap's "Later").
+- Optional extra fields such as time spent and model used (in the roadmap's "Later").

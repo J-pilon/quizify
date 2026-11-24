@@ -1,16 +1,12 @@
-# Phase 3 — Quiz generation
+# Ticket 004 — Quiz generation
 
-| | |
-| --- | --- |
-| Roadmap | [`ROADMAP.md` → Phase 3](../../ROADMAP.md) |
-| Depends on | Phase 1 (OpenAI key, model, quiz defaults), Phase 2 (`EXTRACT_PAGE`) |
-| Branch | `phase-3-quiz-generation` |
+Implements [`ROADMAP.md`](../../ROADMAP.md) Phase 3.
 
-## Goal
+## Overview and Context
 
-Clicking **Generate quiz** produces a valid, grounded quiz, a summary, and topic tags for the current page, and shows them on the quiz page. Every question is backed by a word-for-word quote that is checked against the page's text.
+**Goal:** clicking **Generate quiz** produces a valid, grounded quiz, a summary, and topic tags for the current page, and shows them on the quiz page. Every question is backed by a word-for-word quote that is checked against the page's text.
 
-## Context
+**Context:**
 
 - AI providers are pluggable through an `AIProvider` interface. OpenAI is the only adapter in v1.
 - The question types are multiple choice, true/false, and short answer. The user picks count (5/10/15), difficulty, and types per quiz, prefilled from settings.
@@ -18,7 +14,12 @@ Clicking **Generate quiz** produces a valid, grounded quiz, a summary, and topic
 - The toolbar popup closes as soon as it loses focus, so generation can't run inside it. The popup starts the flow, the background worker does the work, and the quiz page shows progress.
 - All network calls go through the background worker.
 
-## What to implement
+## Dependencies
+
+- `002_settings_and_connections.md` (OpenAI key, model, quiz defaults, `isConfigured`)
+- `003_content_extraction_and_hashing.md` (`EXTRACT_PAGE`)
+
+## Technical Requirements
 
 1. The `AIProvider` interface and the quiz types in `lib/quiz/types.ts`.
 2. An OpenAI adapter using Structured Outputs.
@@ -26,18 +27,30 @@ Clicking **Generate quiz** produces a valid, grounded quiz, a summary, and topic
 4. Output validation, including checking each quote against the page, with one retry.
 5. Per-quiz options in the popup.
 6. The end-to-end flow: popup → background → quiz page, with a loading state and Cancel.
-7. A basic read-only display of the generated quiz on the quiz page (Phase 4 replaces it with the real quiz UI).
+7. A basic read-only display of the generated quiz on the quiz page (Ticket 005 replaces it with the real quiz UI).
 
-## How to implement
+## Implementation Steps
 
-### Types (`lib/quiz/types.ts`)
+- [ ] 1. Add `lib/quiz/types.ts` (see "Types").
+- [ ] 2. Add the provider interface and `getProvider` (see "Provider interface").
+- [ ] 3. Add `lib/quiz/schema.ts` and `lib/quiz/prompt.ts` (see "JSON schema" and "Prompt").
+- [ ] 4. Add `lib/quiz/validate.ts`, including `quoteAppearsInText` (see "Validation").
+- [ ] 5. Add the OpenAI adapter, and move `TEST_OPENAI` into it (see "OpenAI adapter").
+- [ ] 6. Add the generation function with the retry policy (see "Retry policy").
+- [ ] 7. Add the per-quiz options to the popup (see "Popup options").
+- [ ] 8. Wire the end-to-end flow (see "Flow").
+- [ ] 9. Replace the Ticket 003 debug view with the basic quiz display (see "Basic quiz display").
 
-Use the data model from `ROADMAP.md`. Add two fields there:
+### Types
 
-- `schemaVersion: 1` on `Quiz`, so data saved to Notion can be checked when it's loaded back (Phase 7).
-- `updatedAt: string` (ISO timestamp) on `Quiz`, used to decide whether the local copy or the Notion copy is newer (Phase 7).
+Use the data model from `ROADMAP.md`, with two added fields:
 
-### Provider interface (`lib/providers/types.ts`)
+- `schemaVersion: 1` on `Quiz`, so data saved to Notion can be checked when it's loaded back (Ticket 008).
+- `updatedAt: string` (ISO timestamp) on `Quiz`, used to decide whether the local copy or the Notion copy is newer (Ticket 008).
+
+### Provider interface
+
+`lib/providers/types.ts`:
 
 ```ts
 export interface GenerateQuizInput {
@@ -61,19 +74,21 @@ export interface AIProvider {
 }
 ```
 
-- In this phase, `gradeShortAnswers` can throw "not implemented"; Phase 5 implements it.
+- In this ticket, `gradeShortAnswers` can throw "not implemented"; Ticket 006 implements it.
 - `getProvider(settings)` returns the adapter for `settings.ai.provider`. Nothing outside `lib/providers/` imports `openai.ts` directly.
 
-### OpenAI adapter (`lib/providers/openai.ts`)
+### OpenAI adapter
 
-- Call `fetch` directly (no SDK): `POST https://api.openai.com/v1/chat/completions`.
-- Request Structured Outputs: `response_format: { type: "json_schema", json_schema: { name: "quiz", strict: true, schema } }`.
-- Parse `choices[0].message.content` as JSON. If `choices[0].message.refusal` is set, raise an error that says the model refused.
+`lib/providers/openai.ts`:
+
+- Call `fetch` directly (no SDK).
+- Request Structured Outputs with a strict JSON schema.
+- If the model refuses, raise an error that says so.
 - Map HTTP errors to readable messages: 401 (invalid key), 429 (rate limit or quota), 5xx (OpenAI is having problems).
-- Move `testConnection` here from the Phase 1 background handler, so all OpenAI calls live in the adapter.
-- Choose the default model, set `DEFAULT_MODEL`, and record the choice in `docs/decisions/phase-3_DECISIONS.md`. This resolves the roadmap's "Default model" open question.
+- Move `testConnection` here from the Ticket 002 background handler, so all OpenAI calls live in the adapter.
+- Set `DEFAULT_MODEL` to the chosen default (see "Technical Decisions Required").
 
-### JSON schema (`lib/quiz/schema.ts`)
+### JSON schema
 
 Strict mode requires every property to be listed in `required` and `additionalProperties: false`. Represent "no choices" as an empty array instead of leaving the field out:
 
@@ -103,7 +118,7 @@ Strict mode requires every property to be listed in `required` and `additionalPr
 }
 ```
 
-### Prompt (`lib/quiz/prompt.ts`)
+### Prompt
 
 System message rules:
 
@@ -119,7 +134,7 @@ System message rules:
 
 The user message contains the article title and text, wrapped in clear delimiters.
 
-### Validation (`lib/quiz/validate.ts`)
+### Validation
 
 `validateGeneratedQuiz(generated, input, articleText)` returns `{ valid: Question[]; errors: string[] }`. A question fails validation if any of these are true:
 
@@ -134,11 +149,11 @@ The user message contains the article title and text, wrapped in clear delimiter
 
 - Normalize both strings: NFC, lowercase, turn curly quotes into straight quotes and dashes into `-`, remove the `#` and `-` markers added by the structured text, and collapse whitespace.
 - Pass if the normalized quote is a substring of the normalized text.
-- Otherwise, pass if some window of the text with the same number of words contains at least 90% of the quote's words in order. Keep the threshold in a constant.
+- Otherwise, pass if some window of the text with the same number of words contains at least `QUOTE_MATCH_THRESHOLD` of the quote's words in order.
 
 The whole quiz also fails if the number of valid questions differs from `count`.
 
-**Retry policy:**
+### Retry policy
 
 1. If validation fails, make one more call. Add a message listing the specific errors and asking the model for a corrected full response.
 2. Validate the second response. If at least one question is valid, use the valid ones and tell the user, e.g. "Generated 8 of 10 questions. 2 couldn't be verified against the page."
@@ -163,13 +178,22 @@ Assign question IDs (`crypto.randomUUID()`) after validation.
 6. **Cancel** on the quiz page, or closing the tab, disconnects the connection. The background calls `abort()` when the connection disconnects.
 7. When the quiz page opens, it checks `quiz:<quizId>` first. If a quiz already exists, it shows it without generating again, so reloading the tab doesn't cost a second API call.
 
-The long-lived connection also keeps the background worker active while it waits for OpenAI. Phase 8 checks how this holds up on long requests in Safari.
+The long-lived connection also keeps the background worker active while it waits for OpenAI. Ticket 009 checks how this holds up on long requests in Safari.
 
 ### Basic quiz display
 
-The quiz page shows a loading state ("Reading the page and writing your quiz…") with **Cancel**. When the quiz arrives, it shows the summary, the tags, and a numbered list of questions with their choices, without answers. Phase 4 replaces this list with the one-question-at-a-time UI.
+The quiz page shows a loading state ("Reading the page and writing your quiz…") with **Cancel**. When the quiz arrives, it shows the summary, the tags, and a numbered list of questions with their choices, without answers. Ticket 005 replaces this list with the one-question-at-a-time UI.
 
-## Acceptance criteria
+## Technical Decisions Required
+
+1. **Default OpenAI model.** Pick a cost-efficient model that produces well-grounded questions on the Ticket 003 fixtures. This resolves the roadmap's "Default model" open question.
+2. **Which OpenAI endpoint:** Chat Completions (`POST /v1/chat/completions` with `response_format: { type: "json_schema", json_schema: { name, strict: true, schema } }`; read `choices[0].message.content`, and check `message.refusal`), or the Responses API (`POST /v1/responses` with `text.format`). Chat Completions is suggested, because its response shape is simple to parse without the SDK.
+3. **`QUOTE_MATCH_THRESHOLD`** for quote matching. Suggested: 0.9.
+4. **What to do when only some questions are valid after the retry.** Suggested: show the valid ones with a notice, as described in "Retry policy". The alternative is to fail the whole quiz.
+
+Record all decisions in `docs/implemented/004_DECISIONS.md`.
+
+## Acceptance Criteria
 
 - [ ] On a configured install, clicking **Generate quiz** on an article opens a quiz tab that shows a loading state, then a summary, three to six tags, and the questions.
 - [ ] The quiz has exactly the requested number of questions, or a visible message explains why there are fewer.
@@ -184,9 +208,9 @@ The quiz page shows a loading state ("Reading the page and writing your quiz…"
 - [ ] An invalid OpenAI key, a rate limit, or a network failure shows a readable error on the quiz page with **Try again**.
 - [ ] If Quizify isn't configured, the popup shows **Finish setup** instead of **Generate quiz**.
 - [ ] No module outside `lib/providers/` imports the OpenAI adapter directly.
-- [ ] The default model is chosen and recorded in `docs/decisions/phase-3_DECISIONS.md`.
+- [ ] The default model is chosen and recorded in `docs/implemented/004_DECISIONS.md`.
 
-## Test plan
+## Test Plan
 
 - `validate.test.ts`
   - Accepts a fully valid quiz.
@@ -195,12 +219,12 @@ The quiz page shows a loading state ("Reading the page and writing your quiz…"
 - `quote-match.test.ts`
   - Exact match passes.
   - Curly-versus-straight quotes, different whitespace, and different letter case pass.
-  - One changed word in a long quote passes under the 90% rule.
+  - One changed word in a long quote passes under the threshold.
   - A made-up sentence fails.
   - A quote that crosses a heading marker in the structured text passes.
 - `openai.test.ts` (mocked `fetch`)
   - Sends the schema and the chosen model.
-  - Parses `message.content`.
+  - Parses the response content.
   - Raises on a refusal.
   - Maps 401, 429, and 500 to the right messages.
 - `generate.test.ts`
@@ -209,9 +233,9 @@ The quiz page shows a loading state ("Reading the page and writing your quiz…"
   - A fully invalid second response raises an error.
 - Use `makeQuestion`, `makeQuiz`, and `makeGeneratedQuiz` from `quiz-factories.ts`, as described in the testing conventions.
 
-## Out of scope
+## Out of Scope
 
-- The real one-question-at-a-time UI, answering, and opening the quiz in a window (Phase 4).
-- Grading and short-answer grading (Phase 5).
-- Saving to Notion (Phase 6).
-- Providers other than OpenAI (in "Later").
+- The real one-question-at-a-time UI, answering, and opening the quiz in a window (Ticket 005).
+- Grading and short-answer grading (Ticket 006).
+- Saving to Notion (Ticket 007).
+- Providers other than OpenAI (in the roadmap's "Later").

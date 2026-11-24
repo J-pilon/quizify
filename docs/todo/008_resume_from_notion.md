@@ -1,25 +1,27 @@
-# Phase 7 — Resume from Notion
+# Ticket 008 — Resume from Notion
 
-| | |
-| --- | --- |
-| Roadmap | [`ROADMAP.md` → Phase 7](../../ROADMAP.md) |
-| Depends on | Phase 2 (extraction and hash), Phase 4 (quiz page, local autosave and index), Phase 6 (Notion rows and data block) |
-| Branch | `phase-7-resume-from-notion` |
+Implements [`ROADMAP.md`](../../ROADMAP.md) Phase 7.
 
-## Goal
+## Overview and Context
 
-Quizzes saved for later can be picked back up from the popup, either on the page they belong to or from a **Saved quizzes** list. When a page's content has changed since it was saved, Quizify says so.
+**Goal:** quizzes saved for later can be picked back up from the popup, either on the page they belong to or from a **Saved quizzes** list. When a page's content has changed since it was saved, Quizify says so.
 
-## Context
+**Context:**
 
-- Unfinished quizzes are saved to Notion with Status *In progress* (Phase 6).
+- Unfinished quizzes are saved to Notion with Status *In progress* (Ticket 007).
 - Each Quiz page in Notion ends with a "Quizify data — do not edit" code block containing the full `Quiz` JSON, including `schemaVersion`, `updatedAt`, and the `notion` IDs. It may be split across several consecutive code blocks.
-- The same quiz may also exist in local storage at `quiz:<id>`, indexed by `quizIndex:<normalizedUrl>` (Phase 4).
+- The same quiz may also exist in local storage at `quiz:<id>`, indexed by `quizIndex:<normalizedUrl>` (Ticket 005).
 - The content hash, a SHA-256 of the page's cleaned text, is stored on both the Source and the Quiz. A different current hash means the page's material has changed.
-- Completing a resumed quiz must update the same Notion row (Phase 6 does this automatically when `quiz.notion.quizPageId` is set).
+- Completing a resumed quiz must update the same Notion row. Ticket 007 does this automatically when `quiz.notion.quizPageId` is set.
 - Full page versioning is a "Later" feature. In v1, a changed page is only flagged.
 
-## What to implement
+## Dependencies
+
+- `003_content_extraction_and_hashing.md` (extraction and hash)
+- `005_quiz_page_ui.md` (quiz page, local autosave and index)
+- `007_save_to_notion.md` (Notion rows and data block)
+
+## Technical Requirements
 
 1. A page lookup when the popup opens: the current page's Source, its in-progress quizzes, and whether its content has changed.
 2. **Resume quiz** next to **Generate new quiz** in the popup.
@@ -28,13 +30,22 @@ Quizzes saved for later can be picked back up from the popup, either on the page
 5. Choosing the newer copy between local storage and Notion.
 6. A "page changed" notice in the popup and on resumed quizzes.
 
-## How to implement
+## Implementation Steps
 
-### Page lookup (`background/lookup-page.ts`)
+- [ ] 1. Add `parseStoredQuiz` (see "Loading a quiz").
+- [ ] 2. Add `lib/notion/load-quiz.ts` and the `LOAD_QUIZ` background message (see "Loading a quiz").
+- [ ] 3. Change the quiz page to call `LOAD_QUIZ` when it opens (see "Loading a quiz").
+- [ ] 4. Add `background/lookup-page.ts` and the `LOOKUP_PAGE` message (see "Page lookup").
+- [ ] 5. Add **Resume quiz** and the changed-page notice to the popup (see "Popup").
+- [ ] 6. Add the **Saved quizzes** list view to the popup (see "Saved quizzes list").
+- [ ] 7. Add the changed-page notice to the quiz page (see "Changed-page notice on the quiz page").
+- [ ] 8. Check completing a resumed quiz end to end (see "Completing a resumed quiz").
+
+### Page lookup
 
 `LOOKUP_PAGE { tabId }`, sent when the popup opens:
 
-1. Run `EXTRACT_PAGE` (Phase 2) to get `normalizedUrl` and `contentHash`. If extraction fails, still show the saved quizzes list, but hide the page-specific parts.
+1. Run `EXTRACT_PAGE` (Ticket 003) to get `normalizedUrl` and `contentHash`. If extraction fails, still show the saved quizzes list, but hide the page-specific parts.
 2. **Local check:** read `quizIndex:<normalizedUrl>` and load those quizzes. Keep the ones with `status: "in_progress"`.
 3. **Notion check:** query Sources where URL equals `normalizedUrl`. If a row is found, query Quizzes where Source contains that page ID and Status is *In progress*, sorted by Started, newest first.
 4. Merge the two lists by quiz ID. A quiz that exists only locally (never saved) still appears.
@@ -49,8 +60,6 @@ Quizzes saved for later can be picked back up from the popup, either on the page
                 answeredCount?: number; savedToNotion: boolean }[];
 }
 ```
-
-`answeredCount` is only known for quizzes found locally. For Notion-only quizzes, show the start date and nothing else. Don't download every data block just to fill in counts.
 
 Show the popup immediately and fill in Notion results when they arrive, with a small loading indicator. A slow Notion response must not block **Generate quiz**.
 
@@ -68,9 +77,9 @@ Show the popup immediately and fill in Notion results when they arrive, with a s
 - Selecting an item:
   1. Loads the quiz (below) to get `source.url`.
   2. Opens the article in a new tab. If the active tab already shows the same normalized URL, uses it instead.
-  3. Opens the quiz page with `openQuizPage` (Phase 4, which respects the tab or window setting), using `quiz.html?quizId=<id>`.
+  3. Opens the quiz page with `openQuizPage` (Ticket 005, which respects the tab or window setting), using `quiz.html?quizId=<id>`.
 
-### Loading a quiz (`lib/notion/load-quiz.ts`)
+### Loading a quiz
 
 `LOAD_QUIZ { quizId, quizPageId? }`, used when the quiz page opens and when choosing from the list:
 
@@ -87,7 +96,7 @@ Show the popup immediately and fill in Notion results when they arrive, with a s
 4. **Choose a copy:** use whichever has the later `updatedAt`. If only one exists, use that one. Save the chosen copy to local storage (and add it to `quizIndex`) so the quiz page can work from local storage as usual.
 5. If Notion can't be reached but a local copy exists, use the local copy and show a small "Using your local copy; Notion couldn't be reached" notice.
 
-The Phase 4 quiz page currently loads only from local storage. Change it to call `LOAD_QUIZ` first, so opening `quiz.html?quizId=<id>` works on any machine that has the Notion page.
+The Ticket 005 quiz page currently loads only from local storage. Change it to call `LOAD_QUIZ` first, so opening `quiz.html?quizId=<id>` works on any machine that has the Notion page.
 
 ### Changed-page notice on the quiz page
 
@@ -100,9 +109,16 @@ If the hashes differ, show a dismissible notice: "This page has changed since th
 
 ### Completing a resumed quiz
 
-No new Notion code is needed. The loaded quiz has `notion.quizPageId`, so Phase 6's `upsertQuiz` updates the same row and sets it to *Completed*. The work in this phase is to check this end to end.
+No new Notion code is needed. The loaded quiz has `notion.quizPageId`, so Ticket 007's `upsertQuiz` updates the same row and sets it to *Completed*. The work in this step is to check this end to end.
 
-## Acceptance criteria
+## Technical Decisions Required
+
+1. **Show answered counts for Notion-only quizzes in the popup?** Suggested: no. Getting the count means downloading every quiz's data block, which slows the popup. Show the start date only.
+2. **Opening the article when resuming from the list.** Suggested: reuse the active tab if it already shows the same normalized URL, otherwise open a new tab. Finding the article in any other open tab would need the `tabs` permission, which Quizify doesn't otherwise need.
+
+Record all decisions in `docs/implemented/008_DECISIONS.md`.
+
+## Acceptance Criteria
 
 - [ ] Opening the popup on a page with an in-progress quiz shows **Resume quiz** next to **Generate new quiz**.
 - [ ] Opening the popup on a page with no in-progress quizzes shows only **Generate quiz**.
@@ -119,7 +135,7 @@ No new Notion code is needed. The loaded quiz has `notion.quizPageId`, so Phase 
 - [ ] If Notion is unreachable, quizzes stored locally can still be resumed, and the popup still offers **Generate quiz**.
 - [ ] A slow Notion lookup doesn't delay showing **Generate quiz** in the popup.
 
-## Test plan
+## Test Plan
 
 - `parse-stored-quiz.test.ts`
   - Accepts a valid quiz.
@@ -137,8 +153,8 @@ No new Notion code is needed. The loaded quiz has `notion.quizPageId`, so Phase 
 - An end-to-end test with fakes: save partway through, clear local storage, load from Notion, finish, save again. The fake client must record exactly one Quizzes row, with Status *Completed*.
 - Reuse `makeSavedQuiz()` and `makeBlockList()`. Add `makeDataBlocks(quiz, { split })`.
 
-## Out of scope
+## Out of Scope
 
-- Page versioning, where a changed hash creates a new Source version and keeps history (in "Later").
+- Page versioning, where a changed hash creates a new Source version and keeps history (in the roadmap's "Later").
 - Showing completed quizzes, history, or statistics in the extension.
-- Highlighting quotes on the article (in "Later").
+- Highlighting quotes on the article (in the roadmap's "Later").
