@@ -266,7 +266,7 @@ Guide the agent through implementing a todo ticket from `docs/todo/` following T
    - [X] moved to docs/implemented/
    - [X] diagrams generated (if changes warranted them)
 
-   Next step: Phase 7 - Diagram Generation
+   Next step: Phase 7 - Review the Implementation
    ```
 
 ### Phase 7: Review the Implementation
